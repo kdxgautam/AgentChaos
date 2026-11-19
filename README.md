@@ -2,7 +2,7 @@
 
 AgentChaos is a Python SDK for chaos engineering and reliability testing of AI agents.
 
-Milestone 1 proves that a deterministic LangChain agent can issue a real tool call and that LangGraph executes the underlying Python function. The example requires no API keys or network requests at runtime.
+Milestone 1 proves that a deterministic LangChain agent can issue a real tool call and that public LangChain middleware can intercept it before execution. The reusable `ChaosMiddleware` accepts an immutable `FaultPolicy`, and the example requires no API keys or network requests at runtime.
 
 ## Run
 
@@ -12,11 +12,11 @@ uv run python examples/order_agent.py
 uv run pytest
 ```
 
-The model's first response requests `get_order_status(order_id="ORD-101")`. LangGraph then runs the registered Python function and adds its return value as a `ToolMessage`. The deterministic model reads that message and produces the final response.
+The model's first response requests `get_order_status(order_id="ORD-101")`. With no policy—or a policy targeting another tool—the registered Python function runs normally. A matching policy short-circuits before execution and returns an error `ToolMessage`; the model reports that failure instead of success.
 
 ## Limitations
 
-- Fault injection and AgentChaos middleware are intentionally not implemented in this milestone.
+- Each middleware instance supports one exact tool-name policy.
 - The fake model covers one fixed tool-call path; it does not interpret arbitrary user prompts.
 - The order data is hard-coded and the example has no persistence or external integrations.
-- Tool calls and results are observable in agent message history; interception and alteration remain future work.
+- There are no retries, delays, timeouts, or generalized fault types.

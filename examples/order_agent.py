@@ -3,6 +3,7 @@
 from collections.abc import Callable, Sequence
 from typing import Any, Self
 
+from agentchaos import ChaosMiddleware, FaultPolicy
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
@@ -10,8 +11,12 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import BaseTool, StructuredTool
 
 
+executed_order_ids: list[str] = []
+
+
 def get_order_status(order_id: str) -> str:
     """Return the status of an order."""
+    executed_order_ids.append(order_id)
     return f"Order {order_id} is shipped. Expected delivery: 2026-11-20."
 
 
@@ -57,7 +62,10 @@ class DeterministicOrderModel(BaseChatModel):
                 ],
             )
 
-        return AIMessage(content=f"Tool result received: {tool_messages[-1].content}")
+        tool_message = tool_messages[-1]
+        if tool_message.status == "error":
+            return AIMessage(content=f"Tool failed: {tool_message.content}")
+        return AIMessage(content=f"Tool result received: {tool_message.content}")
 
     def _generate(
         self,
@@ -78,7 +86,35 @@ class DeterministicOrderModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=self._next_message(messages))])
 
 
-agent = create_agent(model=DeterministicOrderModel(), tools=[order_status_tool])
+agent = create_agent(
+    model=DeterministicOrderModel(),
+    tools=[order_status_tool],
+    middleware=[ChaosMiddleware()],
+)
+chaos_agent = create_agent(
+    model=DeterministicOrderModel(),
+    tools=[order_status_tool],
+    middleware=[
+        ChaosMiddleware(
+            FaultPolicy(
+                tool_name="get_order_status",
+                error_message="Simulated order service failure.",
+            )
+        )
+    ],
+)
+nonmatching_policy_agent = create_agent(
+    model=DeterministicOrderModel(),
+    tools=[order_status_tool],
+    middleware=[
+        ChaosMiddleware(
+            FaultPolicy(
+                tool_name="cancel_order",
+                error_message="Simulated cancellation service failure.",
+            )
+        )
+    ],
+)
 
 
 if __name__ == "__main__":
