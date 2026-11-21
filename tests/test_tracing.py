@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC
 
 import pytest
@@ -126,13 +127,79 @@ async def test_async_trace_outcomes_and_exception_propagation() -> None:
 def test_collectors_are_independent() -> None:
     first = TraceCollector()
     second = TraceCollector()
+    shared_call_id = "same-call-id"
 
-    ChaosMiddleware(collector=first).wrap_tool_call(request("first"), response)
+    ChaosMiddleware(collector=first).wrap_tool_call(
+        request(shared_call_id), response
+    )
+    ChaosMiddleware(collector=second).wrap_tool_call(
+        request(shared_call_id), lambda req: response(req, error=True)
+    )
 
-    assert [event.call_id for event in first.events] == ["first", "first"]
-    assert second.events == ()
+    assert [(event.event, event.call_id) for event in first.events] == [
+        ("start", shared_call_id),
+        ("success", shared_call_id),
+    ]
+    assert [(event.event, event.call_id) for event in second.events] == [
+        ("start", shared_call_id),
+        ("returned_tool_error", shared_call_id),
+    ]
 
-    ChaosMiddleware(collector=second).wrap_tool_call(request("second"), response)
 
-    assert [event.call_id for event in first.events] == ["first", "first"]
-    assert [event.call_id for event in second.events] == ["second", "second"]
+@pytest.mark.asyncio
+async def test_overlapping_async_calls_keep_events_correlated() -> None:
+    collector = TraceCollector()
+    middleware = ChaosMiddleware(collector=collector)
+    success_entered = asyncio.Event()
+    exception_entered = asyncio.Event()
+    release = asyncio.Event()
+    exception = RuntimeError("boom")
+
+    async def succeed(req: ToolCallRequest) -> ToolMessage:
+        success_entered.set()
+        await exception_entered.wait()
+        await release.wait()
+        return response(req)
+
+    async def fail(_: ToolCallRequest) -> ToolMessage:
+        exception_entered.set()
+        await success_entered.wait()
+        await release.wait()
+        raise exception
+
+    success_task = asyncio.create_task(
+        middleware.awrap_tool_call(request("success-call"), succeed)
+    )
+    exception_task = asyncio.create_task(
+        middleware.awrap_tool_call(request("exception-call"), fail)
+    )
+
+    await success_entered.wait()
+    await exception_entered.wait()
+    assert not success_task.done()
+    assert not exception_task.done()
+    assert {(event.event, event.call_id) for event in collector.events} == {
+        ("start", "success-call"),
+        ("start", "exception-call"),
+    }
+
+    release.set()
+    success_result = await success_task
+    with pytest.raises(RuntimeError) as raised:
+        await exception_task
+
+    assert success_result.status == "success"
+    assert raised.value is exception
+    events_by_call = {
+        call_id: [event for event in collector.events if event.call_id == call_id]
+        for call_id in ("success-call", "exception-call")
+    }
+    assert [event.event for event in events_by_call["success-call"]] == [
+        "start",
+        "success",
+    ]
+    assert [event.event for event in events_by_call["exception-call"]] == [
+        "start",
+        "raised_exception",
+    ]
+    assert events_by_call["exception-call"][-1].exception_type == "RuntimeError"
