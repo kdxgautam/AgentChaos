@@ -2,7 +2,7 @@
 
 AgentChaos is a Python SDK for chaos engineering and reliability testing of AI agents.
 
-Milestone 1 proves that a deterministic LangChain agent can issue a real tool call and that public LangChain middleware can intercept it before execution. The reusable `ChaosMiddleware` accepts an immutable `FaultPolicy` and an optional in-memory `TraceCollector`; the example requires no API keys or network requests at runtime.
+Milestone 1 proves that a deterministic LangChain agent can issue a real tool call and that public LangChain middleware can intercept it before execution. The reusable `ChaosMiddleware` accepts an immutable `FaultPolicy` and an optional in-memory `TraceCollector`. `ScenarioRunner` compares isolated baseline and faulted executions using an application-provided agent factory. The example requires no API keys or network requests at runtime.
 
 ## Run
 
@@ -17,6 +17,7 @@ The model's first response requests `get_order_status(order_id="ORD-101")`. With
 ## Limitations
 
 - Each middleware instance supports one exact tool-name policy.
+- `ScenarioRunner` uses synchronous agent invocation only.
 - Trace events live only in their collector instance and are lost when it is discarded.
 - The fake model covers one fixed tool-call path; it does not interpret arbitrary user prompts.
 - The order data is hard-coded and the example has no persistence or external integrations.

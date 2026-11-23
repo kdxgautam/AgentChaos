@@ -29,6 +29,8 @@ order_status_tool = StructuredTool.from_function(
     func=get_order_status,
     coroutine=aget_order_status,
 )
+# StructuredTool exposes the function's typed schema and sync/async implementations
+# so the agent can validate tool-call arguments and execute the function reliably.
 
 
 class DeterministicOrderModel(BaseChatModel):
@@ -86,34 +88,31 @@ class DeterministicOrderModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=self._next_message(messages))])
 
 
-agent = create_agent(
-    model=DeterministicOrderModel(),
-    tools=[order_status_tool],
-    middleware=[ChaosMiddleware()],
-)
-chaos_agent = create_agent(
-    model=DeterministicOrderModel(),
-    tools=[order_status_tool],
-    middleware=[
-        ChaosMiddleware(
-            FaultPolicy(
-                tool_name="get_order_status",
-                error_message="Simulated order service failure.",
-            )
+def create_order_agent(middleware: ChaosMiddleware):
+    """Create a fresh deterministic order agent."""
+    return create_agent(
+        model=DeterministicOrderModel(),
+        tools=[order_status_tool],
+        middleware=[middleware],
+    )
+
+
+agent = create_order_agent(ChaosMiddleware())
+chaos_agent = create_order_agent(
+    ChaosMiddleware(
+        FaultPolicy(
+            tool_name="get_order_status",
+            error_message="Simulated order service failure.",
         )
-    ],
+    )
 )
-nonmatching_policy_agent = create_agent(
-    model=DeterministicOrderModel(),
-    tools=[order_status_tool],
-    middleware=[
-        ChaosMiddleware(
-            FaultPolicy(
-                tool_name="cancel_order",
-                error_message="Simulated cancellation service failure.",
-            )
+nonmatching_policy_agent = create_order_agent(
+    ChaosMiddleware(
+        FaultPolicy(
+            tool_name="cancel_order",
+            error_message="Simulated cancellation service failure.",
         )
-    ],
+    )
 )
 
 
