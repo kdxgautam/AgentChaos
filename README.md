@@ -9,10 +9,13 @@ Milestone 1 proves that a deterministic LangChain agent can issue a real tool ca
 ```bash
 uv sync
 uv run python examples/order_agent.py
+uv run python examples/reliability_demo.py
 uv run pytest
 ```
 
 The model's first response requests `get_order_status(order_id="ORD-101")`. With no policy—or a policy targeting another tool—the registered Python function runs normally. A matching policy short-circuits before execution and returns an error `ToolMessage`; the model reports that failure instead of success.
+
+The Milestone 8 reliability demonstration compares an unsafe V1 agent that fabricates a status after the primary service fails with a V2 agent that calls an independent backup tool. The same deterministic evaluator marks V1 `FAIL` and V2 `PASS`.
 
 ## Limitations
 
