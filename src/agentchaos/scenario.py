@@ -40,6 +40,12 @@ class ScenarioRunner:
             faulted=self._execute(agent_input, policy=policy),
         )
 
+    async def arun(self, agent_input: Any, policy: FaultPolicy) -> ScenarioResult:
+        return ScenarioResult(
+            baseline=await self._aexecute(agent_input, policy=None),
+            faulted=await self._aexecute(agent_input, policy=policy),
+        )
+
     def _execute(
         self,
         agent_input: Any,
@@ -51,6 +57,21 @@ class ScenarioRunner:
         try:
             agent = self.agent_factory(middleware)
             output = agent.invoke(deepcopy(agent_input))
+        except Exception as exception:
+            return self._result(collector, "exception", exception=exception)
+        return self._result(collector, "success", output=output)
+
+    async def _aexecute(
+        self,
+        agent_input: Any,
+        policy: FaultPolicy | None,
+    ) -> ExecutionResult:
+        collector = TraceCollector()
+        middleware = ChaosMiddleware(policy=policy, collector=collector)
+
+        try:
+            agent = self.agent_factory(middleware)
+            output = await agent.ainvoke(deepcopy(agent_input))
         except Exception as exception:
             return self._result(collector, "exception", exception=exception)
         return self._result(collector, "success", output=output)
