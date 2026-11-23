@@ -4,7 +4,7 @@ import pytest
 from langchain.agents.middleware import ToolCallRequest
 from langchain_core.messages import ToolMessage
 
-from agentchaos import ChaosMiddleware, FaultPolicy, ScenarioRunner
+from agentchaos import ChaosMiddleware, FaultPolicy, ScenarioRunner, TraceCollector
 from examples.order_agent import create_order_agent, executed_order_ids
 
 
@@ -18,6 +18,69 @@ def clear_executed_orders() -> None:
 
 def terminal_events(result) -> list[str]:
     return [event.event for event in result.trace_events]
+
+
+class TwoPartyGate:
+    def __init__(self) -> None:
+        self.entered = 0
+        self.both_entered = asyncio.Event()
+
+    async def wait(self) -> None:
+        self.entered += 1
+        if self.entered == 2:
+            self.both_entered.set()
+        await self.both_entered.wait()
+
+
+def stateful_agent_factory(
+    state: list[str],
+    gate: TwoPartyGate,
+    collectors: list[TraceCollector],
+):
+    class StatefulAgent:
+        def __init__(self, middleware: ChaosMiddleware) -> None:
+            self.middleware = middleware
+            assert middleware.collector is not None
+            collectors.append(middleware.collector)
+
+        async def ainvoke(self, agent_input: dict) -> ToolMessage:
+            request = ToolCallRequest(
+                tool_call={
+                    "name": "get_order_status",
+                    "args": {"order_id": "ORD-101"},
+                    "id": "shared-state-call",
+                    "type": "tool_call",
+                },
+                tool=None,
+                state={},
+                runtime=None,  # type: ignore[arg-type]
+            )
+
+            async def execute(req: ToolCallRequest) -> ToolMessage:
+                state.append(agent_input["scenario"])
+                await gate.wait()
+                return ToolMessage(
+                    content=",".join(sorted(state)),
+                    name=req.tool_call["name"],
+                    tool_call_id=req.tool_call["id"],
+                    status="success",
+                )
+
+            return await self.middleware.awrap_tool_call(request, execute)
+
+    return StatefulAgent
+
+
+def assert_isolated_traces(result) -> None:
+    assert terminal_events(result.baseline) == ["start", "success"]
+    assert terminal_events(result.faulted) == ["start", "injected_failure"]
+    assert result.baseline.fault_triggered is False
+    assert result.faulted.fault_triggered is True
+    assert result.baseline.trace_events is not result.faulted.trace_events
+    assert {
+        event.call_id
+        for event in result.baseline.trace_events + result.faulted.trace_events
+    } == {"shared-state-call"}
 
 
 def test_baseline_and_matching_policy() -> None:
@@ -322,3 +385,58 @@ async def test_arun_propagates_cancellation() -> None:
 
     assert len(collectors) == 1
     assert [event.event for event in collectors[0].events] == ["start"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_scenarios_can_share_mutable_tool_state() -> None:
+    shared_state: list[str] = []
+    collectors: list[TraceCollector] = []
+    factory = stateful_agent_factory(shared_state, TwoPartyGate(), collectors)
+    runner = ScenarioRunner(factory)
+    policy = FaultPolicy("get_order_status", "injected")
+
+    first, second = await asyncio.gather(
+        runner.arun({"scenario": "first"}, policy),
+        runner.arun({"scenario": "second"}, policy),
+    )
+
+    assert sorted(shared_state) == ["first", "second"]
+    assert first.baseline.output.content == "first,second"
+    assert second.baseline.output.content == "first,second"
+    assert first.faulted.output.status == "error"
+    assert second.faulted.output.status == "error"
+    assert len(collectors) == 4
+    assert len({id(collector) for collector in collectors}) == 4
+    assert_isolated_traces(first)
+    assert_isolated_traces(second)
+
+
+@pytest.mark.asyncio
+async def test_injected_per_scenario_state_does_not_leak() -> None:
+    first_state: list[str] = []
+    second_state: list[str] = []
+    collectors: list[TraceCollector] = []
+    gate = TwoPartyGate()
+    first_runner = ScenarioRunner(
+        stateful_agent_factory(first_state, gate, collectors)
+    )
+    second_runner = ScenarioRunner(
+        stateful_agent_factory(second_state, gate, collectors)
+    )
+    policy = FaultPolicy("get_order_status", "injected")
+
+    first, second = await asyncio.gather(
+        first_runner.arun({"scenario": "first"}, policy),
+        second_runner.arun({"scenario": "second"}, policy),
+    )
+
+    assert first_state == ["first"]
+    assert second_state == ["second"]
+    assert first.baseline.output.content == "first"
+    assert second.baseline.output.content == "second"
+    assert first.faulted.output.status == "error"
+    assert second.faulted.output.status == "error"
+    assert len(collectors) == 4
+    assert len({id(collector) for collector in collectors}) == 4
+    assert_isolated_traces(first)
+    assert_isolated_traces(second)
