@@ -91,6 +91,7 @@ class ScenarioRunner:
             exception=exception,
             trace_events=events,
             fault_triggered=any(
-                event.event == "injected_failure" for event in events
+                event.event in {"injected_failure", "response_replaced"}
+                for event in events
             ),
         )

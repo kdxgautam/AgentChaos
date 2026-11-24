@@ -9,6 +9,7 @@ TraceEventType = Literal[
     "start",
     "success",
     "injected_failure",
+    "response_replaced",
     "returned_tool_error",
     "raised_exception",
 ]

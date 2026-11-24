@@ -122,6 +122,28 @@ def test_nonmatching_policy_executes_both_runs() -> None:
     assert executed_order_ids == ["ORD-101", "ORD-101"]
 
 
+def test_after_policy_executes_tool_then_replaces_its_response() -> None:
+    result = ScenarioRunner(create_order_agent).run(
+        AGENT_INPUT,
+        FaultPolicy(
+            "get_order_status",
+            "Simulated response loss.",
+            stage="after",
+        ),
+    )
+
+    assert result.faulted.fault_triggered is True
+    assert terminal_events(result.faulted) == [
+        "start",
+        "success",
+        "response_replaced",
+    ]
+    assert result.faulted.output["messages"][-1].content == (
+        "Tool failed: Simulated response loss."
+    )
+    assert executed_order_ids == ["ORD-101", "ORD-101"]
+
+
 def test_agent_exceptions_are_returned_with_their_traces() -> None:
     exceptions: list[RuntimeError] = []
 

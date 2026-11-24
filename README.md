@@ -13,13 +13,15 @@ uv run python examples/reliability_demo.py
 uv run pytest
 ```
 
-The model's first response requests `get_order_status(order_id="ORD-101")`. With no policy—or a policy targeting another tool—the registered Python function runs normally. A matching policy short-circuits before execution and returns an error `ToolMessage`; the model reports that failure instead of success.
+The model's first response requests `get_order_status(order_id="ORD-101")`. With no policy—or a policy targeting another tool—the registered Python function runs normally. A matching policy defaults to `stage="before"`, which short-circuits execution and returns an error `ToolMessage`. With `stage="after"`, the tool executes once and a successful `ToolMessage` is replaced with the configured error. An optional `on_call` schedules the fault for one matching attempt, while `None` injects on every matching call. Returned tool errors, commands, and raised exceptions are preserved.
 
 The Milestone 8 reliability demonstration compares an unsafe V1 agent that fabricates a status after the primary service fails with a V2 agent that calls an independent backup tool. The same deterministic evaluator marks V1 `FAIL` and V2 `PASS`.
 
 ## Limitations
 
 - Each middleware instance supports one exact tool-name policy.
+- Attempt schedules are in-memory and scoped to one middleware instance; recreating middleware resets the counter.
+- Post-execution injection cannot undo side effects produced by the tool before its response is replaced.
 - A single scenario runs its baseline and faulted executions sequentially; separate async scenarios can run concurrently.
 - ScenarioRunner isolates agents, collectors, traces, and copied inputs, but not mutable dependencies captured by an agent factory. Use separate factory closures or another per-scenario provider for isolated in-memory state.
 - ScenarioEvaluator treats check exceptions as inconclusive unless another check has a known failure; it does not assign scores or infer correctness beyond configured checks.
