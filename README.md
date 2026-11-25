@@ -10,6 +10,8 @@ Milestone 1 proves that a deterministic LangChain agent can issue a real tool ca
 uv sync
 uv run python examples/order_agent.py
 uv run python examples/reliability_demo.py
+uv run python examples/idempotency_demo.py
+uv run python examples/checkpoint_recovery_demo.py
 uv run pytest
 ```
 
@@ -17,11 +19,18 @@ The model's first response requests `get_order_status(order_id="ORD-101")`. With
 
 The Milestone 8 reliability demonstration compares an unsafe V1 agent that fabricates a status after the primary service fails with a V2 agent that calls an independent backup tool. The same deterministic evaluator marks V1 `FAIL` and V2 `PASS`.
 
+The Milestone 9B.2 experiment replaces the first successful `create_order` response with an error, causing one deterministic retry with the same idempotency key. A naive in-memory service persists two orders and evaluates `FAIL`; an atomic idempotent service reuses the first order and evaluates `PASS`.
+
+The checkpoint-recovery experiment saves a LangGraph checkpoint before `create_order`, raises a controlled exception after the external commit, and resumes the same thread. The node re-executes with the saved idempotency key: the naive service duplicates the order, while the idempotent service reuses it.
+
 ## Limitations
 
 - Each middleware instance supports one exact tool-name policy.
 - Attempt schedules are in-memory and scoped to one middleware instance; recreating middleware resets the counter.
 - Post-execution injection cannot undo side effects produced by the tool before its response is replaced.
+- The idempotency experiment uses process-local locks and memory; it does not model durability or coordination across processes.
+- Its concurrency checks coordinate threads deterministically, but still model only in-process behavior.
+- Checkpoint recovery simulates a node failure; it is not an actual process crash or a durability test.
 - A single scenario runs its baseline and faulted executions sequentially; separate async scenarios can run concurrently.
 - ScenarioRunner isolates agents, collectors, traces, and copied inputs, but not mutable dependencies captured by an agent factory. Use separate factory closures or another per-scenario provider for isolated in-memory state.
 - ScenarioEvaluator treats check exceptions as inconclusive unless another check has a known failure; it does not assign scores or infer correctness beyond configured checks.
