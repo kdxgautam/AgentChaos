@@ -8,10 +8,13 @@ from agentchaos.middleware import ChaosMiddleware, FaultPolicy
 from agentchaos.orchestration import (
     AUDIT_TASKS,
     AuditTask,
+    CandidateFinding,
     ExpectedWorkerFailure,
     RepositoryAuditOrchestrator,
+    WorkerOutput,
     WorkerResult,
 )
+from agentchaos.reliability_worker import create_reliability_worker
 from agentchaos.repository import (
     AnalysisIssue,
     CallCandidate,
@@ -37,6 +40,7 @@ __all__ = [
     "AuditTask",
     "AnalysisIssue",
     "CallCandidate",
+    "CandidateFinding",
     "CheckOutcome",
     "EvaluationResult",
     "ExecutionResult",
@@ -58,5 +62,7 @@ __all__ = [
     "TraceCollector",
     "TraceEvent",
     "WorkerResult",
+    "WorkerOutput",
+    "create_reliability_worker",
     "evaluation_to_audit_finding",
 ]

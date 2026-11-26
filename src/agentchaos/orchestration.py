@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 import operator
+from pathlib import PurePosixPath
 from typing import Annotated, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -13,6 +14,61 @@ from agentchaos.repository import RepositoryAnalysisError, RepositoryAnalyzer
 
 WorkerRole = Literal["security", "reliability", "architecture", "performance"]
 WorkerOutcome = Literal["success", "expected_failure"]
+FindingUncertainty = Literal["low", "medium", "high"]
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateFinding:
+    """An unverified, source-referenced specialist observation."""
+
+    claim: str
+    source_path: str
+    start_line: int
+    end_line: int
+    evidence: str
+    uncertainty: FindingUncertainty
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.claim, str) or not self.claim.strip():
+            raise ValueError("claim must be non-empty")
+        if not isinstance(self.source_path, str):
+            raise ValueError("source_path must be repository-relative")
+        path = PurePosixPath(self.source_path)
+        if path.is_absolute() or not path.parts or ".." in path.parts:
+            raise ValueError("source_path must be repository-relative")
+        if (
+            not isinstance(self.start_line, int)
+            or not isinstance(self.end_line, int)
+            or self.start_line < 1
+            or self.end_line < self.start_line
+        ):
+            raise ValueError("source line range is invalid")
+        if not isinstance(self.evidence, str) or not self.evidence.strip():
+            raise ValueError("evidence must be non-empty")
+        if not isinstance(self.uncertainty, str) or self.uncertainty not in {
+            "low",
+            "medium",
+            "high",
+        }:
+            raise ValueError("uncertainty must be low, medium, or high")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerOutput:
+    """Structured data returned by a successful specialist worker."""
+
+    observations: tuple[str, ...] = ()
+    candidate_findings: tuple[CandidateFinding, ...] = ()
+
+    def __post_init__(self) -> None:
+        observations = tuple(self.observations)
+        findings = tuple(self.candidate_findings)
+        if any(not isinstance(item, str) for item in observations):
+            raise ValueError("observations must contain only strings")
+        if any(not isinstance(item, CandidateFinding) for item in findings):
+            raise ValueError("candidate_findings must contain only CandidateFinding values")
+        object.__setattr__(self, "observations", observations)
+        object.__setattr__(self, "candidate_findings", findings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +96,7 @@ class WorkerResult:
     observations: tuple[str, ...]
     error_type: str | None = None
     error_message: str | None = None
+    candidate_findings: tuple[CandidateFinding, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.task_id.strip():
@@ -47,7 +104,11 @@ class WorkerResult:
         observations = tuple(self.observations)
         if any(not isinstance(item, str) for item in observations):
             raise ValueError("observations must contain only strings")
+        candidate_findings = tuple(self.candidate_findings)
+        if any(not isinstance(item, CandidateFinding) for item in candidate_findings):
+            raise ValueError("candidate_findings must contain only CandidateFinding values")
         object.__setattr__(self, "observations", observations)
+        object.__setattr__(self, "candidate_findings", candidate_findings)
 
 
 class ExpectedWorkerFailure(Exception):
@@ -59,7 +120,7 @@ class ExpectedWorkerFailure(Exception):
 
 
 WorkerHandler = Callable[
-    [AuditTask, RepositoryAnalyzer], Awaitable[Sequence[str]]
+    [AuditTask, RepositoryAnalyzer], Awaitable[Sequence[str] | WorkerOutput]
 ]
 
 
@@ -171,7 +232,7 @@ class RepositoryAuditOrchestrator:
             task = state["task"]
             handler = configured_workers[task.role]
             try:
-                observations = tuple(await handler(task, state["repository"]))
+                output = await handler(task, state["repository"])
             except ExpectedWorkerFailure as exception:
                 result = WorkerResult(
                     task_id=task.task_id,
@@ -182,11 +243,18 @@ class RepositoryAuditOrchestrator:
                     error_message=str(exception),
                 )
             else:
+                if isinstance(output, WorkerOutput):
+                    observations = output.observations
+                    candidate_findings = output.candidate_findings
+                else:
+                    observations = tuple(output)
+                    candidate_findings = ()
                 result = WorkerResult(
                     task_id=task.task_id,
                     role=task.role,
                     outcome="success",
                     observations=observations,
+                    candidate_findings=candidate_findings,
                 )
             return {"worker_results": [result]}
 
