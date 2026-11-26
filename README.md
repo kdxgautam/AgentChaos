@@ -12,8 +12,12 @@ uv run python examples/order_agent.py
 uv run python examples/reliability_demo.py
 uv run python examples/idempotency_demo.py
 uv run python examples/checkpoint_recovery_demo.py
+uv run python examples/process_crash_recovery_demo.py
+uv run agentchaos audit examples/audits.py --output report.json
 uv run pytest
 ```
+
+The local CLI executes `SCENARIOS` from an explicitly selected, trusted Python file, prints status counts, and writes the complete audit report as deterministic JSON. Python audit files execute arbitrary code and must not be loaded from untrusted sources.
 
 The model's first response requests `get_order_status(order_id="ORD-101")`. With no policy—or a policy targeting another tool—the registered Python function runs normally. A matching policy defaults to `stage="before"`, which short-circuits execution and returns an error `ToolMessage`. With `stage="after"`, the tool executes once and a successful `ToolMessage` is replaced with the configured error. An optional `on_call` schedules the fault for one matching attempt, while `None` injects on every matching call. Returned tool errors, commands, and raised exceptions are preserved.
 
@@ -23,6 +27,8 @@ The Milestone 9B.2 experiment replaces the first successful `create_order` respo
 
 The checkpoint-recovery experiment saves a LangGraph checkpoint before `create_order`, raises a controlled exception after the external commit, and resumes the same thread. The node re-executes with the saved idempotency key: the naive service duplicates the order, while the idempotent service reuses it.
 
+The process-crash experiment uses durable SQLite databases and terminates a blocked worker after its order transaction commits. A fresh worker resumes the same LangGraph thread from its synced checkpoint, demonstrating real process termination rather than an in-process exception.
+
 ## Limitations
 
 - Each middleware instance supports one exact tool-name policy.
@@ -31,6 +37,7 @@ The checkpoint-recovery experiment saves a LangGraph checkpoint before `create_o
 - The idempotency experiment uses process-local locks and memory; it does not model durability or coordination across processes.
 - Its concurrency checks coordinate threads deterministically, but still model only in-process behavior.
 - Checkpoint recovery simulates a node failure; it is not an actual process crash or a durability test.
+- Process-crash recovery uses local SQLite files and process termination; it does not model machine loss, filesystem corruption, or distributed databases.
 - A single scenario runs its baseline and faulted executions sequentially; separate async scenarios can run concurrently.
 - ScenarioRunner isolates agents, collectors, traces, and copied inputs, but not mutable dependencies captured by an agent factory. Use separate factory closures or another per-scenario provider for isolated in-memory state.
 - ScenarioEvaluator treats check exceptions as inconclusive unless another check has a known failure; it does not assign scores or infer correctness beyond configured checks.

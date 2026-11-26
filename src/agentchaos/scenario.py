@@ -9,6 +9,9 @@ from agentchaos.middleware import ChaosMiddleware, FaultPolicy
 from agentchaos.tracing import TraceCollector, TraceEvent
 
 
+ExceptionProvenance = Literal["subject", "harness"]
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionResult:
     """The outcome of one agent execution."""
@@ -18,6 +21,7 @@ class ExecutionResult:
     exception: Exception | None
     trace_events: tuple[TraceEvent, ...]
     fault_triggered: bool
+    exception_provenance: ExceptionProvenance | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,9 +60,31 @@ class ScenarioRunner:
 
         try:
             agent = self.agent_factory(middleware)
-            output = agent.invoke(deepcopy(agent_input))
         except Exception as exception:
-            return self._result(collector, "exception", exception=exception)
+            return self._result(
+                collector,
+                "exception",
+                exception=exception,
+                exception_provenance="harness",
+            )
+        try:
+            copied_input = deepcopy(agent_input)
+        except Exception as exception:
+            return self._result(
+                collector,
+                "exception",
+                exception=exception,
+                exception_provenance="harness",
+            )
+        try:
+            output = agent.invoke(copied_input)
+        except Exception as exception:
+            return self._result(
+                collector,
+                "exception",
+                exception=exception,
+                exception_provenance="subject",
+            )
         return self._result(collector, "success", output=output)
 
     async def _aexecute(
@@ -71,9 +97,31 @@ class ScenarioRunner:
 
         try:
             agent = self.agent_factory(middleware)
-            output = await agent.ainvoke(deepcopy(agent_input))
         except Exception as exception:
-            return self._result(collector, "exception", exception=exception)
+            return self._result(
+                collector,
+                "exception",
+                exception=exception,
+                exception_provenance="harness",
+            )
+        try:
+            copied_input = deepcopy(agent_input)
+        except Exception as exception:
+            return self._result(
+                collector,
+                "exception",
+                exception=exception,
+                exception_provenance="harness",
+            )
+        try:
+            output = await agent.ainvoke(copied_input)
+        except Exception as exception:
+            return self._result(
+                collector,
+                "exception",
+                exception=exception,
+                exception_provenance="subject",
+            )
         return self._result(collector, "success", output=output)
 
     @staticmethod
@@ -83,6 +131,7 @@ class ScenarioRunner:
         *,
         output: Any | None = None,
         exception: Exception | None = None,
+        exception_provenance: ExceptionProvenance | None = None,
     ) -> ExecutionResult:
         events = collector.events
         return ExecutionResult(
@@ -94,4 +143,5 @@ class ScenarioRunner:
                 event.event in {"injected_failure", "response_replaced"}
                 for event in events
             ),
+            exception_provenance=exception_provenance,
         )
